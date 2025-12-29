@@ -1,5 +1,6 @@
 {
   "manifest_version": 1,
+  "id": "presence_agent_plugin",
   "name": "Presence Agent",
   "version": "1.0.0",
   "description": "Proactive check-in and time-based reminders with LLM-generated messages.",

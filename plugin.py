@@ -17,8 +17,9 @@ from src.plugin_system import (
     EventType,
     register_plugin,
 )
-from src.plugin_system.apis import chat_api, llm_api, message_api, send_api, get_logger
+from src.plugin_system.apis import chat_api, llm_api, message_api, send_api, database_api, get_logger
 from src.plugin_system.core.component_registry import component_registry
+from src.plugin_system.base.config_types import ConfigLayout, ConfigTab, section_meta
 
 logger = get_logger("presence_agent_plugin")
 
@@ -263,8 +264,12 @@ def _decide_tone(affinity_score: int, config: Dict[str, Any]) -> Tuple[str, str]
     """Pick tone style name and description based on affinity score."""
     style_cfg = config.get("style", {})
     thresholds = style_cfg.get("tone_thresholds", {})
-    formal_threshold = int(thresholds.get("formal_max", 30))
-    warm_threshold = int(thresholds.get("warm_max", 70))
+    if isinstance(thresholds, dict) and thresholds:
+        formal_threshold = int(thresholds.get("formal_max", style_cfg.get("formal_max", 30)))
+        warm_threshold = int(thresholds.get("warm_max", style_cfg.get("warm_max", 70)))
+    else:
+        formal_threshold = int(style_cfg.get("formal_max", 30))
+        warm_threshold = int(style_cfg.get("warm_max", 70))
 
     if affinity_score <= formal_threshold:
         style_key = "formal"
@@ -274,24 +279,35 @@ def _decide_tone(affinity_score: int, config: Dict[str, Any]) -> Tuple[str, str]
         style_key = "intimate"
 
     tone_map = style_cfg.get("tone_descriptions", {})
-    description = str(
-        tone_map.get(
-            style_key,
-            "保持简短、自然、礼貌的语气。"
-            if style_key == "formal"
-            else "语气温柔、自然、有点朋友感。"
-            if style_key == "warm"
-            else "语气更亲近、更关心、更黏人。",
-        )
-    )
+    if not isinstance(tone_map, dict):
+        tone_map = {}
+    fallback_map = {
+        "formal": str(style_cfg.get("formal_description", "语气礼貌克制，表达关心但不过度打扰。")),
+        "warm": str(style_cfg.get("warm_description", "语气温柔自然，像朋友般关心。")),
+        "intimate": str(style_cfg.get("intimate_description", "语气更亲近、更黏人，表达强烈在意。")),
+    }
+    description = str(tone_map.get(style_key, fallback_map.get(style_key, "")))
     return style_key, description
 
 
 def _resolve_persona(config: Dict[str, Any]) -> Tuple[str, str, str]:
     """Resolve persona pack name and hints."""
     persona_cfg = config.get("persona", {})
-    packs = persona_cfg.get("packs", {}) if isinstance(persona_cfg.get("packs"), dict) else {}
     pack_key = str(persona_cfg.get("active_pack", "warm_companion"))
+    packs_raw = persona_cfg.get("packs")
+
+    packs: Dict[str, Dict[str, Any]] = {}
+    if isinstance(packs_raw, dict):
+        packs = {str(k): v for k, v in packs_raw.items() if isinstance(v, dict)}
+    elif isinstance(packs_raw, list):
+        for item in packs_raw:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key", "")).strip()
+            if not key:
+                continue
+            packs[key] = item
+
     pack = packs.get(pack_key, {}) if isinstance(packs, dict) else {}
     name = str(pack.get("name", "温柔陪伴"))
     style_hint = str(pack.get("style_hint", "语气温柔自然，像朋友一样关心对方。"))
@@ -608,6 +624,43 @@ class PresenceAgentTask(AsyncTask):
             logger.error(f"Failed to send message to {stream_id}: {exc}")
             return False
 
+    async def _log_proactive_action(
+        self,
+        stream,
+        text: str,
+        reason: str,
+        affinity_score: int,
+        emotion_label: str,
+        tone_style: str,
+        persona_name: str,
+        config: Dict[str, Any],
+    ) -> None:
+        """Write proactive action info into database."""
+        db_cfg = config.get("database", {})
+        if not db_cfg.get("enabled", True):
+            return
+        if not db_cfg.get("store_action", True):
+            return
+        try:
+            action_data = {
+                "reason": reason,
+                "message": text,
+                "affinity_score": affinity_score,
+                "emotion_label": emotion_label,
+                "tone_style": tone_style,
+                "persona": persona_name,
+            }
+            await database_api.store_action_info(
+                chat_stream=stream,
+                action_build_into_prompt=False,
+                action_prompt_display=text,
+                action_done=True,
+                action_data=action_data,
+                action_name="presence_agent_proactive",
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to log proactive action: {exc}")
+
     async def run(self):
         """Main periodic scan loop."""
         config = self._load_config()
@@ -707,6 +760,16 @@ class PresenceAgentTask(AsyncTask):
                     persona_behavior,
                 )
                 if await self._send_message(stream_id, text):
+                    await self._log_proactive_action(
+                        stream,
+                        text,
+                        reason,
+                        affinity_score,
+                        emotion_label,
+                        tone_style,
+                        persona_name,
+                        config,
+                    )
                     stream_state["last_proactive_ts"] = now_ts
                     stream_state["unanswered_count"] = unanswered_count + 1
                     state[stream_id] = stream_state
@@ -744,6 +807,16 @@ class PresenceAgentTask(AsyncTask):
                     persona_behavior,
                 )
                 if await self._send_message(stream_id, text):
+                    await self._log_proactive_action(
+                        stream,
+                        text,
+                        reason,
+                        affinity_score,
+                        emotion_label,
+                        tone_style,
+                        persona_name,
+                        config,
+                    )
                     stream_state["last_proactive_ts"] = now_ts
                     stream_state["unanswered_count"] = unanswered_count + 1
                     state[stream_id] = stream_state
@@ -770,6 +843,16 @@ class PresenceAgentTask(AsyncTask):
                     persona_behavior,
                 )
                 if await self._send_message(stream_id, text):
+                    await self._log_proactive_action(
+                        stream,
+                        text,
+                        "segment_reminder",
+                        affinity_score,
+                        emotion_label,
+                        tone_style,
+                        persona_name,
+                        config,
+                    )
                     last_sent_map = stream_state.get("last_segment_sent", {})
                     last_sent_map[segment.name] = _today_str()
                     stream_state["last_segment_sent"] = last_sent_map
@@ -834,186 +917,650 @@ class PresenceAgentPlugin(BasePlugin):
     python_dependencies: List[str] = []
     config_file_name = "config.toml"
     config_section_descriptions = {
-        "plugin": "插件基础设置",
-        "general": "行为与频率设置",
-        "affinity": "好感度影响设置",
-        "lists": "白名单/黑名单",
-        "quiet_hours": "安静时段设置",
-        "emotion": "情绪强度判断",
-        "topic_continuation": "话题接续设置",
-        "unread_strategy": "已读不回策略",
-        "response_strategy": "未回复反馈策略",
-        "style": "语气与幽默风格",
-        "persona": "人设包设置",
-        "segments": "时间段提醒设置",
-        "messages": "提示词与兜底消息",
+        "plugin": section_meta("插件基础设置", icon="settings", order=1),
+        "general": section_meta("行为与频率设置", icon="timer", order=2),
+        "segments": section_meta("时间段提醒设置", icon="calendar-clock", order=3),
+        "messages": section_meta("提示词与兜底消息", icon="message-circle", order=4),
+        "affinity": section_meta("好感度影响设置", icon="heart", order=10),
+        "emotion": section_meta("情绪强度判断", icon="smile", order=11),
+        "style": section_meta("语气与幽默风格", icon="sparkles", order=12),
+        "persona": section_meta("人设包设置", icon="user", order=13),
+        "response_strategy": section_meta("未回复反馈策略", icon="repeat", order=14),
+        "unread_strategy": section_meta("已读不回策略", icon="mail", order=15),
+        "database": section_meta("数据库记录", icon="database", order=16),
+        "lists": section_meta("白名单/黑名单", icon="list", order=17),
+        "quiet_hours": section_meta("安静时段设置", icon="moon", order=18),
+        "topic_continuation": section_meta("话题接续设置", icon="message-square", order=19),
     }
 
     config_schema = {
         "plugin": {
-            "enabled": ConfigField(type=bool, default=True, description="是否启用 PresenceAgent 插件"),
-            "config_version": ConfigField(type=str, default="1.1.0", description="配置结构版本号"),
+            "enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用 PresenceAgent 插件",
+                input_type="switch",
+                order=1,
+            ),
+            "config_version": ConfigField(
+                type=str,
+                default="1.1.0",
+                description="配置结构版本号",
+                disabled=True,
+                order=99,
+            ),
         },
         "general": {
-            "scan_interval_seconds": ConfigField(type=int, default=300, description="扫描间隔（秒）"),
+            "scan_interval_seconds": ConfigField(
+                type=int,
+                default=300,
+                description="扫描间隔（秒）",
+                min=30,
+                max=3600,
+                step=10,
+                input_type="slider",
+                hint="建议 >= 60 秒",
+                order=1,
+            ),
             "inactivity_threshold_minutes": ConfigField(
-                type=int, default=120, description="沉默多少分钟后主动关心"
+                type=int,
+                default=120,
+                description="沉默多少分钟后主动关心",
+                min=1,
+                max=1440,
+                order=2,
             ),
             "quick_check_minutes": ConfigField(
-                type=int, default=5, description="聊天中断后多久快速询问（分钟）"
+                type=int,
+                default=5,
+                description="聊天中断后多久快速询问（分钟）",
+                min=1,
+                max=120,
+                order=3,
             ),
             "recent_active_window_minutes": ConfigField(
-                type=int, default=30, description="视为“刚在聊天”的时间窗口（分钟）"
+                type=int,
+                default=30,
+                description="视为“刚在聊天”的时间窗口（分钟）",
+                min=5,
+                max=240,
+                order=4,
             ),
             "proactive_cooldown_minutes": ConfigField(
-                type=int, default=60, description="主动消息冷却时间（分钟）"
+                type=int,
+                default=60,
+                description="主动消息冷却时间（分钟）",
+                min=5,
+                max=1440,
+                order=5,
             ),
             "max_unanswered": ConfigField(
-                type=int, default=3, description="连续未回应次数上限"
+                type=int,
+                default=3,
+                description="连续未回应次数上限",
+                min=0,
+                max=10,
+                order=6,
             ),
             "segment_skip_if_recent_minutes": ConfigField(
-                type=int, default=30, description="最近有互动则跳过时间段提醒（分钟）"
+                type=int,
+                default=30,
+                description="最近有互动则跳过时间段提醒（分钟）",
+                min=0,
+                max=240,
+                order=7,
             ),
-            "recent_message_limit": ConfigField(type=int, default=8, description="用于生成的最近消息条数"),
+            "recent_message_limit": ConfigField(
+                type=int,
+                default=8,
+                description="用于生成的最近消息条数",
+                min=1,
+                max=30,
+                order=8,
+            ),
             "model_task": ConfigField(
-                type=str, default="replyer", description="使用的 LLM 任务名（来自 model_task_config）"
+                type=str,
+                default="replyer",
+                description="使用的 LLM 任务名（来自 model_task_config）",
+                placeholder="replyer",
+                order=9,
             ),
-            "temperature": ConfigField(type=float, default=0.7, description="LLM 生成温度"),
-            "max_tokens": ConfigField(type=int, default=200, description="LLM 最大输出 token 数"),
-            "private_only": ConfigField(type=bool, default=True, description="仅对私聊发送"),
-            "platform": ConfigField(type=str, default="qq", description='平台过滤："qq" 或 "all"'),
+            "temperature": ConfigField(
+                type=float,
+                default=0.7,
+                description="LLM 生成温度",
+                min=0.0,
+                max=2.0,
+                step=0.1,
+                input_type="slider",
+                order=10,
+            ),
+            "max_tokens": ConfigField(
+                type=int,
+                default=200,
+                description="LLM 最大输出 token 数",
+                min=50,
+                max=800,
+                step=10,
+                order=11,
+            ),
+            "private_only": ConfigField(
+                type=bool,
+                default=True,
+                description="仅对私聊发送",
+                input_type="switch",
+                disabled=True,
+                hint="当前插件固定为私聊模式",
+                order=98,
+            ),
+            "platform": ConfigField(
+                type=str,
+                default="qq",
+                description='平台过滤："qq" 或 "all"',
+                choices=["qq", "all"],
+                input_type="select",
+                order=99,
+            ),
         },
         "affinity": {
-            "enabled": ConfigField(type=bool, default=True, description="是否启用好感度影响频率"),
-            "memory_point_weight": ConfigField(type=int, default=2, description="记忆点权重（每条记忆加分）"),
-            "memory_point_cap": ConfigField(type=int, default=30, description="记忆点计分上限"),
-            "know_times_weight": ConfigField(type=int, default=4, description="熟悉次数权重（每次加分）"),
-            "know_times_cap": ConfigField(type=int, default=20, description="熟悉次数计分上限"),
-            "recent_message_weight": ConfigField(type=int, default=2, description="最近消息权重"),
-            "recent_message_cap": ConfigField(type=int, default=20, description="最近消息计分上限"),
-            "recency_bonus_1d": ConfigField(type=int, default=10, description="1天内互动额外加分"),
-            "recency_bonus_3d": ConfigField(type=int, default=5, description="3天内互动额外加分"),
-            "recency_bonus_7d": ConfigField(type=int, default=2, description="7天内互动额外加分"),
+            "enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用好感度影响频率",
+                input_type="switch",
+                order=1,
+            ),
+            "memory_point_weight": ConfigField(
+                type=int,
+                default=2,
+                description="记忆点权重（每条记忆加分）",
+                min=0,
+                max=10,
+                order=2,
+            ),
+            "memory_point_cap": ConfigField(
+                type=int,
+                default=30,
+                description="记忆点计分上限",
+                min=0,
+                max=100,
+                order=3,
+            ),
+            "know_times_weight": ConfigField(
+                type=int,
+                default=4,
+                description="熟悉次数权重（每次加分）",
+                min=0,
+                max=10,
+                order=4,
+            ),
+            "know_times_cap": ConfigField(
+                type=int,
+                default=20,
+                description="熟悉次数计分上限",
+                min=0,
+                max=100,
+                order=5,
+            ),
+            "recent_message_weight": ConfigField(
+                type=int,
+                default=2,
+                description="最近消息权重",
+                min=0,
+                max=10,
+                order=6,
+            ),
+            "recent_message_cap": ConfigField(
+                type=int,
+                default=20,
+                description="最近消息计分上限",
+                min=0,
+                max=100,
+                order=7,
+            ),
+            "recency_bonus_1d": ConfigField(
+                type=int,
+                default=10,
+                description="1天内互动额外加分",
+                min=0,
+                max=50,
+                order=8,
+            ),
+            "recency_bonus_3d": ConfigField(
+                type=int,
+                default=5,
+                description="3天内互动额外加分",
+                min=0,
+                max=50,
+                order=9,
+            ),
+            "recency_bonus_7d": ConfigField(
+                type=int,
+                default=2,
+                description="7天内互动额外加分",
+                min=0,
+                max=50,
+                order=10,
+            ),
             "inactivity_reduce_ratio": ConfigField(
-                type=float, default=0.5, description="好感度提高时，减少沉默阈值的比例上限"
+                type=float,
+                default=0.5,
+                description="好感度提高时，减少沉默阈值的比例上限",
+                min=0.0,
+                max=1.0,
+                step=0.05,
+                order=11,
             ),
             "cooldown_reduce_ratio": ConfigField(
-                type=float, default=0.5, description="好感度提高时，减少冷却时间的比例上限"
+                type=float,
+                default=0.5,
+                description="好感度提高时，减少冷却时间的比例上限",
+                min=0.0,
+                max=1.0,
+                step=0.05,
+                order=12,
             ),
             "quick_check_reduce_ratio": ConfigField(
-                type=float, default=0.5, description="好感度提高时，减少快速询问时间的比例上限"
+                type=float,
+                default=0.5,
+                description="好感度提高时，减少快速询问时间的比例上限",
+                min=0.0,
+                max=1.0,
+                step=0.05,
+                order=13,
             ),
-            "min_inactivity_minutes": ConfigField(type=int, default=10, description="沉默阈值最低值（分钟）"),
-            "min_cooldown_minutes": ConfigField(type=int, default=10, description="冷却时间最低值（分钟）"),
-            "min_quick_check_minutes": ConfigField(type=int, default=1, description="快速询问最低值（分钟）"),
-            "max_unanswered_bonus": ConfigField(type=int, default=1, description="好感度高时额外允许未回应次数"),
+            "min_inactivity_minutes": ConfigField(
+                type=int,
+                default=10,
+                description="沉默阈值最低值（分钟）",
+                min=1,
+                max=120,
+                order=14,
+            ),
+            "min_cooldown_minutes": ConfigField(
+                type=int,
+                default=10,
+                description="冷却时间最低值（分钟）",
+                min=1,
+                max=120,
+                order=15,
+            ),
+            "min_quick_check_minutes": ConfigField(
+                type=int,
+                default=1,
+                description="快速询问最低值（分钟）",
+                min=1,
+                max=30,
+                order=16,
+            ),
+            "max_unanswered_bonus": ConfigField(
+                type=int,
+                default=1,
+                description="好感度高时额外允许未回应次数",
+                min=0,
+                max=5,
+                order=17,
+            ),
         },
         "lists": {
-            "allowlist": ConfigField(type=list, default=[], description="允许主动触达的用户 ID 列表"),
-            "denylist": ConfigField(type=list, default=[], description="禁止主动触达的用户 ID 列表"),
+            "allowlist": ConfigField(
+                type=list,
+                default=[],
+                description="允许主动触达的用户 ID 列表",
+                item_type="string",
+                placeholder="输入用户 ID",
+                max_items=50,
+                order=1,
+            ),
+            "denylist": ConfigField(
+                type=list,
+                default=[],
+                description="禁止主动触达的用户 ID 列表",
+                item_type="string",
+                placeholder="输入用户 ID",
+                max_items=50,
+                order=2,
+            ),
         },
         "quiet_hours": {
-            "enabled": ConfigField(type=bool, default=True, description="是否启用安静时段"),
-            "start_hour": ConfigField(type=int, default=23, description="安静时段开始小时（0-23）"),
-            "end_hour": ConfigField(type=int, default=7, description="安静时段结束小时（0-23）"),
+            "enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用安静时段",
+                input_type="switch",
+                order=1,
+            ),
+            "start_hour": ConfigField(
+                type=int,
+                default=23,
+                description="安静时段开始小时（0-23）",
+                min=0,
+                max=23,
+                order=2,
+            ),
+            "end_hour": ConfigField(
+                type=int,
+                default=7,
+                description="安静时段结束小时（0-23）",
+                min=0,
+                max=23,
+                order=3,
+            ),
         },
         "emotion": {
-            "enabled": ConfigField(type=bool, default=True, description="是否启用情绪强度判断"),
+            "enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用情绪强度判断",
+                input_type="switch",
+                order=1,
+            ),
             "keywords": ConfigField(
                 type=list,
                 default=["难过", "焦虑", "生气", "烦", "沮丧", "压力", "疲惫", "委屈"],
                 description="情绪关键词列表",
+                item_type="string",
+                placeholder="输入关键词",
+                max_items=30,
+                hint="用于检测用户情绪强度",
+                order=2,
             ),
-            "recent_limit": ConfigField(type=int, default=8, description="情绪分析最近消息条数"),
-            "hit_cap": ConfigField(type=int, default=5, description="命中上限（防止过度放大）"),
-            "intensity_threshold": ConfigField(type=int, default=6, description="触发温柔关心的阈值"),
+            "recent_limit": ConfigField(
+                type=int,
+                default=8,
+                description="情绪分析最近消息条数",
+                min=1,
+                max=50,
+                order=3,
+            ),
+            "hit_cap": ConfigField(
+                type=int,
+                default=5,
+                description="命中上限（防止过度放大）",
+                min=1,
+                max=20,
+                order=4,
+            ),
+            "intensity_threshold": ConfigField(
+                type=int,
+                default=6,
+                description="触发温柔关心的阈值",
+                min=1,
+                max=10,
+                order=5,
+            ),
         },
         "topic_continuation": {
-            "enabled": ConfigField(type=bool, default=True, description="是否启用话题接续"),
+            "enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用话题接续",
+                input_type="switch",
+                order=1,
+            ),
         },
         "unread_strategy": {
-            "enabled": ConfigField(type=bool, default=True, description="是否启用已读不回策略"),
-            "unread_window_minutes": ConfigField(type=int, default=15, description="多久判定未回复（分钟）"),
-            "extra_cooldown_minutes": ConfigField(type=int, default=30, description="未回复时延长冷却（分钟）"),
+            "enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用已读不回策略",
+                input_type="switch",
+                order=1,
+            ),
+            "unread_window_minutes": ConfigField(
+                type=int,
+                default=15,
+                description="多久判定未回复（分钟）",
+                min=1,
+                max=240,
+                order=2,
+            ),
+            "extra_cooldown_minutes": ConfigField(
+                type=int,
+                default=30,
+                description="未回复时延长冷却（分钟）",
+                min=0,
+                max=240,
+                order=3,
+            ),
+        },
+        "database": {
+            "enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用数据库记录",
+                input_type="switch",
+                order=1,
+            ),
+            "store_action": ConfigField(
+                type=bool,
+                default=True,
+                description="记录主动消息到 ActionRecords",
+                input_type="switch",
+                order=2,
+            ),
         },
         "response_strategy": {
-            "enabled": ConfigField(type=bool, default=True, description="是否启用未回复反馈策略"),
-            "reduce_after_unanswered": ConfigField(type=int, default=2, description="未回复几次后减少打扰"),
-            "increase_after_unanswered": ConfigField(type=int, default=1, description="未回复几次后可加大关心"),
-            "affinity_to_increase": ConfigField(type=int, default=70, description="触发加大关心的好感度阈值"),
-            "reduce_threshold_bonus_minutes": ConfigField(type=int, default=30, description="减少打扰时增加沉默阈值（分钟）"),
-            "reduce_quick_bonus_minutes": ConfigField(type=int, default=2, description="减少打扰时增加快速询问阈值（分钟）"),
-            "reduce_cooldown_bonus_minutes": ConfigField(type=int, default=30, description="减少打扰时增加冷却（分钟）"),
-            "increase_threshold_cut_minutes": ConfigField(type=int, default=20, description="加大关心时降低沉默阈值（分钟）"),
-            "increase_quick_cut_minutes": ConfigField(type=int, default=2, description="加大关心时降低快速询问阈值（分钟）"),
-            "min_increase_threshold_minutes": ConfigField(type=int, default=5, description="加大关心沉默阈值下限（分钟）"),
-            "min_increase_quick_minutes": ConfigField(type=int, default=1, description="加大关心快速询问阈值下限（分钟）"),
+            "enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用未回复反馈策略",
+                input_type="switch",
+                order=1,
+            ),
+            "reduce_after_unanswered": ConfigField(
+                type=int,
+                default=2,
+                description="未回复几次后减少打扰",
+                min=0,
+                max=10,
+                order=2,
+            ),
+            "increase_after_unanswered": ConfigField(
+                type=int,
+                default=1,
+                description="未回复几次后可加大关心",
+                min=0,
+                max=10,
+                order=3,
+            ),
+            "affinity_to_increase": ConfigField(
+                type=int,
+                default=70,
+                description="触发加大关心的好感度阈值",
+                min=0,
+                max=100,
+                order=4,
+            ),
+            "reduce_threshold_bonus_minutes": ConfigField(
+                type=int,
+                default=30,
+                description="减少打扰时增加沉默阈值（分钟）",
+                min=0,
+                max=240,
+                order=5,
+            ),
+            "reduce_quick_bonus_minutes": ConfigField(
+                type=int,
+                default=2,
+                description="减少打扰时增加快速询问阈值（分钟）",
+                min=0,
+                max=30,
+                order=6,
+            ),
+            "reduce_cooldown_bonus_minutes": ConfigField(
+                type=int,
+                default=30,
+                description="减少打扰时增加冷却（分钟）",
+                min=0,
+                max=240,
+                order=7,
+            ),
+            "increase_threshold_cut_minutes": ConfigField(
+                type=int,
+                default=20,
+                description="加大关心时降低沉默阈值（分钟）",
+                min=0,
+                max=120,
+                order=8,
+            ),
+            "increase_quick_cut_minutes": ConfigField(
+                type=int,
+                default=2,
+                description="加大关心时降低快速询问阈值（分钟）",
+                min=0,
+                max=20,
+                order=9,
+            ),
+            "min_increase_threshold_minutes": ConfigField(
+                type=int,
+                default=5,
+                description="加大关心沉默阈值下限（分钟）",
+                min=1,
+                max=120,
+                order=10,
+            ),
+            "min_increase_quick_minutes": ConfigField(
+                type=int,
+                default=1,
+                description="加大关心快速询问阈值下限（分钟）",
+                min=1,
+                max=30,
+                order=11,
+            ),
         },
         "style": {
-            "tone_thresholds": ConfigField(
-                type=dict,
-                default={"formal_max": 30, "warm_max": 70},
-                description="语气切换阈值（好感度分界）",
+            "formal_max": ConfigField(
+                type=int,
+                default=30,
+                description="正式语气上限（好感度阈值）",
+                min=0,
+                max=100,
+                order=1,
             ),
-            "tone_descriptions": ConfigField(
-                type=dict,
-                default={
-                    "formal": "语气礼貌克制，表达关心但不过度打扰。",
-                    "warm": "语气温柔自然，像朋友般关心。",
-                    "intimate": "语气更亲近、更黏人，表达强烈在意。",
-                },
-                description="不同关系等级的语气描述",
+            "warm_max": ConfigField(
+                type=int,
+                default=70,
+                description="温柔语气上限（好感度阈值）",
+                min=0,
+                max=100,
+                order=2,
             ),
-            "humor_rate": ConfigField(type=float, default=0.15, description="幽默提示基础概率"),
-            "humor_affinity_bonus": ConfigField(type=float, default=0.25, description="好感度带来的幽默概率加成"),
+            "formal_description": ConfigField(
+                type=str,
+                default="语气礼貌克制，表达关心但不过度打扰。",
+                description="正式语气描述",
+                input_type="textarea",
+                rows=2,
+                order=3,
+            ),
+            "warm_description": ConfigField(
+                type=str,
+                default="语气温柔自然，像朋友般关心。",
+                description="温柔语气描述",
+                input_type="textarea",
+                rows=2,
+                order=4,
+            ),
+            "intimate_description": ConfigField(
+                type=str,
+                default="语气更亲近、更黏人，表达强烈在意。",
+                description="亲近语气描述",
+                input_type="textarea",
+                rows=2,
+                order=5,
+            ),
+            "humor_rate": ConfigField(
+                type=float,
+                default=0.15,
+                description="幽默提示基础概率",
+                min=0.0,
+                max=1.0,
+                step=0.05,
+                order=6,
+            ),
+            "humor_affinity_bonus": ConfigField(
+                type=float,
+                default=0.25,
+                description="好感度带来的幽默概率加成",
+                min=0.0,
+                max=1.0,
+                step=0.05,
+                order=7,
+            ),
         },
         "persona": {
-            "active_pack": ConfigField(type=str, default="warm_companion", description="当前启用的人设包"),
+            "active_pack": ConfigField(
+                type=str,
+                default="warm_companion",
+                description="当前启用的人设包",
+                placeholder="warm_companion",
+                hint="内置示例：warm_companion / gentle_caregiver / playful_buddy / calm_listener / tsundere_partner / cheerful_motivator / professional_assistant / late_night_confidant",
+                order=1,
+            ),
             "packs": ConfigField(
-                type=dict,
-                default={
-                    "warm_companion": {
+                type=list,
+                default=[
+                    {
+                        "key": "warm_companion",
                         "name": "温柔陪伴",
                         "style_hint": "语气温柔自然，像朋友一样关心对方。",
                         "behavior_hint": "用短句，语气轻柔，适度撒娇。",
                     },
-                    "gentle_caregiver": {
+                    {
+                        "key": "gentle_caregiver",
                         "name": "细心照顾",
                         "style_hint": "像贴心家人，关注作息与身体感受。",
                         "behavior_hint": "提醒吃饭休息，但不过度催促。",
                     },
-                    "playful_buddy": {
+                    {
+                        "key": "playful_buddy",
                         "name": "俏皮朋友",
                         "style_hint": "轻松俏皮，偶尔开个小玩笑。",
                         "behavior_hint": "多用口语和语气词，保持亲近感。",
                     },
-                    "calm_listener": {
+                    {
+                        "key": "calm_listener",
                         "name": "安静倾听",
                         "style_hint": "稳重、冷静、支持性强。",
                         "behavior_hint": "少用感叹，多用理解与复述。",
                     },
-                    "tsundere_partner": {
+                    {
+                        "key": "tsundere_partner",
                         "name": "傲娇伙伴",
                         "style_hint": "表面嘴硬，实际很关心。",
                         "behavior_hint": "语气不太直白，但会偷偷在意。",
                     },
-                    "cheerful_motivator": {
+                    {
+                        "key": "cheerful_motivator",
                         "name": "元气鼓励",
                         "style_hint": "积极阳光，擅长鼓励和打气。",
                         "behavior_hint": "多用正向词汇，适度用表情语气。",
                     },
-                    "professional_assistant": {
+                    {
+                        "key": "professional_assistant",
                         "name": "专业助手",
                         "style_hint": "礼貌、克制、明确。",
                         "behavior_hint": "简短直给，不使用过多情绪词。",
                     },
-                    "late_night_confidant": {
+                    {
+                        "key": "late_night_confidant",
                         "name": "深夜知己",
                         "style_hint": "温和低声，适合深夜对话。",
                         "behavior_hint": "语速慢感，给人安全感。",
                     },
-                },
+                ],
                 description="人设包集合",
+                hint="每个条目包含 key/name/style_hint/behavior_hint",
+                item_type="object",
+                item_fields={
+                    "key": {"type": "string", "label": "标识", "placeholder": "warm_companion"},
+                    "name": {"type": "string", "label": "名称", "placeholder": "温柔陪伴"},
+                    "style_hint": {"type": "string", "label": "风格提示", "placeholder": "语气温柔自然"},
+                    "behavior_hint": {"type": "string", "label": "行为提示", "placeholder": "用短句，语气轻柔"},
+                },
+                max_items=20,
+                order=2,
             ),
         },
         "segments": {
@@ -1050,6 +1597,17 @@ class PresenceAgentPlugin(BasePlugin):
                     },
                 ],
                 description="时间段提醒定义",
+                item_type="object",
+                item_fields={
+                    "name": {"type": "string", "label": "名称", "placeholder": "morning"},
+                    "start_hour": {"type": "number", "label": "开始小时", "min": 0, "max": 23},
+                    "end_hour": {"type": "number", "label": "结束小时", "min": 0, "max": 23},
+                    "enabled": {"type": "bool", "label": "是否启用"},
+                    "reminder": {"type": "string", "label": "提醒文案", "placeholder": "记得吃饭哦"},
+                },
+                min_items=0,
+                max_items=10,
+                order=1,
             )
         },
         "messages": {
@@ -1057,6 +1615,9 @@ class PresenceAgentPlugin(BasePlugin):
                 type=str,
                 default="你是一个温暖、拟人化的陪伴者，语气简短、温柔、关心。",
                 description="LLM 系统提示词",
+                input_type="textarea",
+                rows=4,
+                order=1,
             ),
             "inactive_fallback": ConfigField(
                 type=list,
@@ -1066,6 +1627,9 @@ class PresenceAgentPlugin(BasePlugin):
                     "在忙吗？我来看看你～",
                 ],
                 description="久未互动时的兜底消息",
+                item_type="string",
+                max_items=20,
+                order=2,
             ),
             "quick_check_fallback": ConfigField(
                 type=list,
@@ -1075,6 +1639,9 @@ class PresenceAgentPlugin(BasePlugin):
                     "要不要继续刚才的话题？",
                 ],
                 description="聊天中断时的快速关心兜底消息",
+                item_type="string",
+                max_items=20,
+                order=3,
             ),
             "gentle_nudge_fallback": ConfigField(
                 type=list,
@@ -1084,6 +1651,9 @@ class PresenceAgentPlugin(BasePlugin):
                     "想聊聊也可以的，我会认真听。",
                 ],
                 description="情绪强度高时的温柔关心兜底消息",
+                item_type="string",
+                max_items=20,
+                order=4,
             ),
             "topic_followup_fallback": ConfigField(
                 type=list,
@@ -1093,6 +1663,9 @@ class PresenceAgentPlugin(BasePlugin):
                     "要不要把刚才的话题聊完？",
                 ],
                 description="话题接续的兜底消息",
+                item_type="string",
+                max_items=20,
+                order=5,
             ),
             "segment_reminder_fallback": ConfigField(
                 type=list,
@@ -1101,9 +1674,50 @@ class PresenceAgentPlugin(BasePlugin):
                     "别太忙啦，记得吃饭和休息。",
                 ],
                 description="时间段提醒的兜底消息",
+                item_type="string",
+                max_items=20,
+                order=6,
             ),
         },
     }
+
+    config_layout = ConfigLayout(
+        type="tabs",
+        tabs=[
+            ConfigTab(
+                id="basic",
+                title="基础",
+                sections=["plugin", "general", "segments"],
+                icon="settings",
+                order=1,
+            ),
+            ConfigTab(
+                id="behavior",
+                title="行为",
+                sections=[
+                    "affinity",
+                    "emotion",
+                    "style",
+                    "persona",
+                    "response_strategy",
+                    "unread_strategy",
+                    "database",
+                    "lists",
+                    "quiet_hours",
+                    "topic_continuation",
+                ],
+                icon="activity",
+                order=2,
+            ),
+            ConfigTab(
+                id="messages",
+                title="文案",
+                sections=["messages"],
+                icon="message-circle",
+                order=3,
+            ),
+        ],
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
