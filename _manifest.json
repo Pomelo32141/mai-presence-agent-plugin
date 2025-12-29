@@ -5,8 +5,14 @@
   "version": "1.0.0",
   "description": "Proactive check-in and time-based reminders with LLM-generated messages.",
   "author": {
-    "name": "cuisy78, Codex"
+    "name": "cuisy78, Codex",
+    "url": "https://github.com/Pomelo32141"
   },
+  "license": "GPL-3.0",
+  "host_application": {
+    "min_version": "0.12.0"
+  },
+  "repository_url": "https://github.com/Pomelo32141/mai-presence-agent-plugin",
   "entry": "plugin.py",
   "type": "plugin",
   "components": [],

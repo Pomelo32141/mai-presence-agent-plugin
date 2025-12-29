@@ -54,5 +54,8 @@ active_pack = "playful_buddy"
 - 默认只在私聊中生效，避免群聊打扰。
 - 插件会写入 `presence_agent_state.json` 保存状态（自动生成）。
 
+## WebUI 备用方案
+如果 WebUI 打不开配置页面，但你仍想使用图形化编辑，请用本插件目录中的 `plugin_routes.py` 替换 MaiBot 项目根目录的 `src/webui/plugin_routes.py` 文件后再重启。
+
 ## 作者
 cuisy78, Codex
