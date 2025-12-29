@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException, Header, Cookie
-from collections.abc import Mapping
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, get_origin
 from pathlib import Path
@@ -1762,17 +1761,18 @@ async def get_plugin_config(
             return {"success": True, "config": {}, "message": "配置文件不存在"}
 
         import tomlkit
-        from tomlkit.items import Array as TomlArray
+
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = tomlkit.load(f)
+
+        from collections.abc import Mapping
 
         def to_builtin(value):
             if isinstance(value, Mapping):
                 return {str(k): to_builtin(v) for k, v in value.items()}
-            if isinstance(value, (list, tuple, TomlArray)):
+            if isinstance(value, (list, tuple)):
                 return [to_builtin(v) for v in value]
             return value
-
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = tomlkit.load(f)
 
         return {"success": True, "config": to_builtin(config)}
 
