@@ -1,0 +1,4 @@
+config.toml
+presence_agent_state.json
+__pycache__/
+*.pyc

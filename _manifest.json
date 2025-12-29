@@ -1,0 +1,13 @@
+{
+  "manifest_version": 1,
+  "name": "Presence Agent",
+  "version": "1.0.0",
+  "description": "Proactive check-in and time-based reminders with LLM-generated messages.",
+  "author": {
+    "name": "cuisy78, Codex"
+  },
+  "entry": "plugin.py",
+  "type": "plugin",
+  "components": [],
+  "dependencies": []
+}
