@@ -19,7 +19,7 @@ MaiBot-main/plugins/PresenceAgentPlugin
 重启 MaiBot 后会自动加载。
 
 ## 配置
-插件首次运行会自动生成 `config.toml`。你可以调整如下配置项：
+插件首次运行会自动生成 `config.toml`。请你你务必阅读并选择是否调整如下配置项：
 
 - `general`: 扫描频率、快速询问/沉默阈值、LLM 生成参数等
 - `segments`: 时间段提醒（支持跨午夜）
