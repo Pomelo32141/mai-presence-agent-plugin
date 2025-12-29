@@ -965,8 +965,8 @@ class PresenceAgentPlugin(BasePlugin):
         "plugin": {
             "enabled": ConfigField(
                 type=bool,
-                default=True,
-                description="是否启用 PresenceAgent 插件",
+                default=false,
+                description="是否启用 PresenceAgent 插件，启用前注意配置文件修改",
                 input_type="switch",
                 order=1,
             ),
@@ -1760,6 +1760,7 @@ class PresenceAgentPlugin(BasePlugin):
             (PresenceAgentStartHandler.get_handler_info(), PresenceAgentStartHandler),
             (PresenceAgentStopHandler.get_handler_info(), PresenceAgentStopHandler),
         ]
+
 
 
 
