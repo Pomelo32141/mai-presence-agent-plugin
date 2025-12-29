@@ -965,8 +965,8 @@ class PresenceAgentPlugin(BasePlugin):
         "plugin": {
             "enabled": ConfigField(
                 type=bool,
-                default=False,
-                description="是否启用 PresenceAgent 插件，启用前注意配置文件修改",
+                default=True,
+                description="是否启用 PresenceAgent 插件",
                 input_type="switch",
                 order=1,
             ),
@@ -981,7 +981,7 @@ class PresenceAgentPlugin(BasePlugin):
         "general": {
             "scan_interval_seconds": ConfigField(
                 type=int,
-                default=300,
+                default=600,
                 description="扫描间隔（秒）",
                 min=30,
                 max=3600,
@@ -992,15 +992,15 @@ class PresenceAgentPlugin(BasePlugin):
             ),
             "inactivity_threshold_minutes": ConfigField(
                 type=int,
-                default=120,
+                default=1440,
                 description="沉默多少分钟后主动关心",
                 min=1,
-                max=1440,
+                max=10080,
                 order=2,
             ),
             "quick_check_minutes": ConfigField(
                 type=int,
-                default=5,
+                default=2,
                 description="聊天中断后多久快速询问（分钟）",
                 min=1,
                 max=120,
@@ -1016,7 +1016,7 @@ class PresenceAgentPlugin(BasePlugin):
             ),
             "proactive_cooldown_minutes": ConfigField(
                 type=int,
-                default=60,
+                default=120,
                 description="主动消息冷却时间（分钟）",
                 min=5,
                 max=1440,
@@ -1024,7 +1024,7 @@ class PresenceAgentPlugin(BasePlugin):
             ),
             "max_unanswered": ConfigField(
                 type=int,
-                default=3,
+                default=2,
                 description="连续未回应次数上限",
                 min=0,
                 max=10,
@@ -1032,7 +1032,7 @@ class PresenceAgentPlugin(BasePlugin):
             ),
             "segment_skip_if_recent_minutes": ConfigField(
                 type=int,
-                default=30,
+                default=15,
                 description="最近有互动则跳过时间段提醒（分钟）",
                 min=0,
                 max=240,
@@ -1040,10 +1040,10 @@ class PresenceAgentPlugin(BasePlugin):
             ),
             "recent_message_limit": ConfigField(
                 type=int,
-                default=8,
+                default=30,
                 description="用于生成的最近消息条数",
                 min=1,
-                max=30,
+                max=60,
                 order=8,
             ),
             "model_task": ConfigField(
@@ -1065,10 +1065,10 @@ class PresenceAgentPlugin(BasePlugin):
             ),
             "max_tokens": ConfigField(
                 type=int,
-                default=200,
+                default=4096,
                 description="LLM 最大输出 token 数",
-                min=50,
-                max=800,
+                min=512,
+                max=8192,
                 step=10,
                 order=11,
             ),
@@ -1760,6 +1760,7 @@ class PresenceAgentPlugin(BasePlugin):
             (PresenceAgentStartHandler.get_handler_info(), PresenceAgentStartHandler),
             (PresenceAgentStopHandler.get_handler_info(), PresenceAgentStopHandler),
         ]
+
 
 
 
