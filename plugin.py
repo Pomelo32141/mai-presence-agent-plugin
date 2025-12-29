@@ -29,6 +29,7 @@ PLUGIN_NAME = "presence_agent_plugin"
 
 
 @dataclass
+# 时间段提醒规则数据结构
 class SegmentRule:
     """Time segment reminder rule."""
 
@@ -39,6 +40,7 @@ class SegmentRule:
     enabled: bool = True
 
 
+# 从磁盘加载状态
 def _load_state(file_path: str) -> Dict[str, Any]:
     """Load per-stream state from disk."""
     if not os.path.exists(file_path):
@@ -52,6 +54,7 @@ def _load_state(file_path: str) -> Dict[str, Any]:
         return {}
 
 
+# 保存状态到磁盘
 def _save_state(file_path: str, state: Dict[str, Any]) -> None:
     """Save per-stream state to disk."""
     try:
@@ -61,6 +64,7 @@ def _save_state(file_path: str, state: Dict[str, Any]) -> None:
         logger.error(f"Failed to save state file: {exc}")
 
 
+# 判断是否为机器人自身消息
 def _is_bot_message(message_obj) -> bool:
     """Check if a database message is sent by the bot itself."""
     try:
@@ -72,6 +76,7 @@ def _is_bot_message(message_obj) -> bool:
         return False
 
 
+# 获取最近一条用户消息时间
 def _get_last_user_message_ts(messages: List[Any]) -> Optional[float]:
     """Find the last user message timestamp from recent messages."""
     ordered = sorted(messages, key=lambda m: m.time or 0)
@@ -81,6 +86,7 @@ def _get_last_user_message_ts(messages: List[Any]) -> Optional[float]:
     return None
 
 
+# 读取某会话的近期消息
 def _get_recent_messages(stream_id: str, limit: int) -> List[Any]:
     """Fetch recent messages from the database for a stream."""
     try:
@@ -90,16 +96,19 @@ def _get_recent_messages(stream_id: str, limit: int) -> List[Any]:
         return []
 
 
+# 获取今天日期字符串
 def _today_str() -> str:
     """Return local date string (YYYY-MM-DD)."""
     return time.strftime("%Y-%m-%d", time.localtime())
 
 
+# 获取当前小时
 def _current_hour() -> int:
     """Return local hour."""
     return time.localtime().tm_hour
 
 
+# 判断小时是否落在时间段内（支持跨午夜）
 def _hour_in_range(hour: int, start: int, end: int) -> bool:
     """Check if hour is within a segment that may cross midnight."""
     if start <= end:
@@ -107,6 +116,7 @@ def _hour_in_range(hour: int, start: int, end: int) -> bool:
     return hour >= start or hour <= end
 
 
+# 从候选列表挑选兜底消息
 def _pick_fallback_message(messages: List[str]) -> str:
     """Pick a fallback message."""
     candidates = [m.strip() for m in messages if isinstance(m, str) and m.strip()]
@@ -115,6 +125,7 @@ def _pick_fallback_message(messages: List[str]) -> str:
     return random.choice(candidates)
 
 
+# 从文本中安全提取 JSON
 def _safe_extract_json(text: str) -> Dict[str, Any]:
     """Extract JSON object from LLM response."""
     if not text:
@@ -129,6 +140,7 @@ def _safe_extract_json(text: str) -> Dict[str, Any]:
         return {}
 
 
+# 获取最近一条用户消息文本
 def _get_recent_user_text(messages: List[Any]) -> str:
     """Return last user message text for topic continuation."""
     ordered = sorted(messages, key=lambda m: m.time or 0)
@@ -141,6 +153,7 @@ def _get_recent_user_text(messages: List[Any]) -> str:
     return ""
 
 
+# 基于关键词估算情绪强度
 def _compute_emotion_intensity(messages: List[Any], config: Dict[str, Any]) -> int:
     """Estimate emotion intensity from recent messages using keyword matching."""
     emotion_cfg = config.get("emotion", {})
@@ -165,6 +178,7 @@ def _compute_emotion_intensity(messages: List[Any], config: Dict[str, Any]) -> i
     return max(0, min(10, min(hits, cap) * 2))
 
 
+# 汇总情绪强度与标签
 def _summarize_emotion(messages: List[Any], config: Dict[str, Any]) -> Tuple[int, str]:
     """Summarize emotion intensity and label for prompt guidance."""
     intensity = _compute_emotion_intensity(messages, config)
@@ -175,11 +189,13 @@ def _summarize_emotion(messages: List[Any], config: Dict[str, Any]) -> Tuple[int
     return intensity, "mild"
 
 
+# 统计近期用户消息数量
 def _count_recent_user_messages(messages: List[Any]) -> int:
     """Count recent user messages (exclude bot)."""
     return sum(1 for msg in messages if not _is_bot_message(msg))
 
 
+# 计算好感度分数
 def _compute_affinity_score(
     stream,
     recent_messages: List[Any],
@@ -223,6 +239,7 @@ def _compute_affinity_score(
     return max(0, min(100, score))
 
 
+# 根据好感度调整阈值
 def _adjust_by_affinity(
     base_value: int,
     affinity_score: int,
@@ -235,6 +252,7 @@ def _adjust_by_affinity(
     return max(min_value, reduced)
 
 
+# 判断是否处于安静时段
 def _is_quiet_time(now_ts: float, config: Dict[str, Any]) -> bool:
     """Check if current time is in quiet hours."""
     quiet_cfg = config.get("quiet_hours", {})
@@ -246,6 +264,7 @@ def _is_quiet_time(now_ts: float, config: Dict[str, Any]) -> bool:
     return _hour_in_range(hour, start_hour, end_hour)
 
 
+# 判断用户是否允许主动触达
 def _is_user_allowed(stream, config: Dict[str, Any]) -> bool:
     """Check allowlist/denylist for proactive messages."""
     list_cfg = config.get("lists", {})
@@ -260,6 +279,7 @@ def _is_user_allowed(stream, config: Dict[str, Any]) -> bool:
     return True
 
 
+# 根据好感度选择语气风格
 def _decide_tone(affinity_score: int, config: Dict[str, Any]) -> Tuple[str, str]:
     """Pick tone style name and description based on affinity score."""
     style_cfg = config.get("style", {})
@@ -290,6 +310,7 @@ def _decide_tone(affinity_score: int, config: Dict[str, Any]) -> Tuple[str, str]
     return style_key, description
 
 
+# 解析当前人设包配置
 def _resolve_persona(config: Dict[str, Any]) -> Tuple[str, str, str]:
     """Resolve persona pack name and hints."""
     persona_cfg = config.get("persona", {})
@@ -315,6 +336,7 @@ def _resolve_persona(config: Dict[str, Any]) -> Tuple[str, str, str]:
     return name, style_hint, behavior_hint
 
 
+# 根据好感度决定是否加入幽默提示
 def _should_use_humor(config: Dict[str, Any], affinity_score: int) -> bool:
     """Decide whether to add a light humor hint."""
     style_cfg = config.get("style", {})
@@ -325,6 +347,7 @@ def _should_use_humor(config: Dict[str, Any], affinity_score: int) -> bool:
     return random.random() < chance
 
 
+# 根据未回复与情绪选择触达策略
 def _decide_presence_mode(
     unanswered_count: int,
     affinity_score: int,
@@ -349,6 +372,7 @@ def _decide_presence_mode(
     return "balanced"
 
 
+# 获取用户称呼
 def _resolve_user_name(stream) -> str:
     """Resolve a friendly user name."""
     try:
@@ -357,6 +381,7 @@ def _resolve_user_name(stream) -> str:
         return "friend"
 
 
+# 主动陪伴的后台任务
 class PresenceAgentTask(AsyncTask):
     """Background task for proactive chat and reminders."""
 
@@ -861,6 +886,7 @@ class PresenceAgentTask(AsyncTask):
                 break
 
 
+# 插件启动事件处理器
 class PresenceAgentStartHandler(BaseEventHandler):
     """Start the background proactive chat task."""
 
@@ -881,6 +907,7 @@ class PresenceAgentStartHandler(BaseEventHandler):
             return False, False, str(exc), None, None
 
 
+# 插件停止事件处理器
 class PresenceAgentStopHandler(BaseEventHandler):
     """Stop the background proactive chat task."""
 
@@ -908,6 +935,7 @@ _presence_task = PresenceAgentTask(PLUGIN_NAME, _state_file_path)
 
 
 @register_plugin
+# PresenceAgent 插件主体
 class PresenceAgentPlugin(BasePlugin):
     """PresenceAgent plugin - proactive check-in and time reminders."""
 
