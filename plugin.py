@@ -1474,13 +1474,29 @@ class PresenceAgentPlugin(BasePlugin):
                 max=100,
                 order=2,
             ),
+            "tone_thresholds": ConfigField(
+                type=dict,
+                default={},
+                description="自定义语气阈值映射（可选）",
+                placeholder='{"formal_max": 30, "warm_max": 70}',
+                hint="为空则使用 formal_max / warm_max",
+                order=3,
+            ),
+            "tone_descriptions": ConfigField(
+                type=dict,
+                default={},
+                description="自定义语气描述映射（可选）",
+                placeholder='{"formal": "...", "warm": "...", "intimate": "..."}',
+                hint="为空则使用单独的语气描述字段",
+                order=4,
+            ),
             "formal_description": ConfigField(
                 type=str,
                 default="语气礼貌克制，表达关心但不过度打扰。",
                 description="正式语气描述",
                 input_type="textarea",
                 rows=2,
-                order=3,
+                order=5,
             ),
             "warm_description": ConfigField(
                 type=str,
@@ -1488,7 +1504,7 @@ class PresenceAgentPlugin(BasePlugin):
                 description="温柔语气描述",
                 input_type="textarea",
                 rows=2,
-                order=4,
+                order=6,
             ),
             "intimate_description": ConfigField(
                 type=str,
@@ -1496,7 +1512,7 @@ class PresenceAgentPlugin(BasePlugin):
                 description="亲近语气描述",
                 input_type="textarea",
                 rows=2,
-                order=5,
+                order=7,
             ),
             "humor_rate": ConfigField(
                 type=float,
@@ -1505,7 +1521,7 @@ class PresenceAgentPlugin(BasePlugin):
                 min=0.0,
                 max=1.0,
                 step=0.05,
-                order=6,
+                order=8,
             ),
             "humor_affinity_bonus": ConfigField(
                 type=float,
@@ -1514,7 +1530,7 @@ class PresenceAgentPlugin(BasePlugin):
                 min=0.0,
                 max=1.0,
                 step=0.05,
-                order=7,
+                order=9,
             ),
         },
         "persona": {
@@ -1747,6 +1763,61 @@ class PresenceAgentPlugin(BasePlugin):
         ],
     )
 
+    def _generate_and_save_default_config(self, config_file_path: str) -> None:
+        """Generate default config with AoT for list-of-dict fields."""
+        if not self.config_schema:
+            logger.debug(f"{self.log_prefix} 插件未定义config_schema，不生成配置文件")
+            return
+
+        toml_str = f"# {self.plugin_name} - 自动生成的配置文件\n"
+        plugin_description = self.get_manifest_info("description", "插件配置文件")
+        toml_str += f"# {plugin_description}\n\n"
+
+        for section, fields in self.config_schema.items():
+            if section in self.config_section_descriptions:
+                toml_str += f"# {self.config_section_descriptions[section]}\n"
+
+            toml_str += f"[{section}]\n\n"
+
+            if isinstance(fields, dict):
+                for field_name, field in fields.items():
+                    if not isinstance(field, ConfigField):
+                        continue
+
+                    toml_str += f"# {field.description}"
+                    if field.required:
+                        toml_str += " (必需)"
+                    toml_str += "\n"
+
+                    if field.example:
+                        toml_str += f"# 示例: {field.example}\n"
+
+                    if field.choices:
+                        choices_str = ", ".join(map(str, field.choices))
+                        toml_str += f"# 可选值: {choices_str}\n"
+
+                    value = field.default
+                    if (
+                        isinstance(value, list)
+                        and value
+                        and all(isinstance(item, dict) for item in value)
+                    ):
+                        for item in value:
+                            toml_str += f"[[{section}.{field_name}]]\n"
+                            for item_key, item_value in item.items():
+                                toml_str += f"{item_key} = {self._format_toml_value(item_value)}\n"
+                            toml_str += "\n"
+                    else:
+                        toml_str += f"{field_name} = {self._format_toml_value(value)}\n\n"
+
+            toml_str += "\n"
+
+        try:
+            with open(config_file_path, "w", encoding="utf-8") as f:
+                f.write(toml_str)
+            logger.info(f"{self.log_prefix} 已生成默认配置文件: {config_file_path}")
+        except IOError as e:
+            logger.error(f"{self.log_prefix} 保存默认配置文件失败: {e}", exc_info=True)
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Update state file path to plugin directory.

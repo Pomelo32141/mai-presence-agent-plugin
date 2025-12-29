@@ -1,0 +1,178 @@
+﻿[plugin]
+enabled = true
+config_version = "1.1.0"
+
+[general]
+scan_interval_seconds = 600
+inactivity_threshold_minutes = 1440
+quick_check_minutes = 2
+recent_active_window_minutes = 30
+proactive_cooldown_minutes = 120
+max_unanswered = 2
+segment_skip_if_recent_minutes = 15
+recent_message_limit = 30
+model_task = "replyer"
+temperature = 0.7
+max_tokens = 4096
+private_only = true
+platform = "qq"
+
+[affinity]
+enabled = true
+memory_point_weight = 2
+memory_point_cap = 30
+know_times_weight = 4
+know_times_cap = 20
+recent_message_weight = 2
+recent_message_cap = 20
+recency_bonus_1d = 10
+recency_bonus_3d = 5
+recency_bonus_7d = 2
+inactivity_reduce_ratio = 0.5
+cooldown_reduce_ratio = 0.5
+quick_check_reduce_ratio = 0.5
+min_inactivity_minutes = 10
+min_cooldown_minutes = 10
+min_quick_check_minutes = 1
+max_unanswered_bonus = 1
+
+[lists]
+allowlist = []
+denylist = []
+
+[quiet_hours]
+enabled = true
+start_hour = 23
+end_hour = 7
+
+[emotion]
+enabled = true
+keywords = ["难过", "焦虑", "生气", "烦", "沮丧", "压力", "疲惫", "委屈"]
+recent_limit = 8
+hit_cap = 5
+intensity_threshold = 6
+
+[topic_continuation]
+enabled = true
+
+[unread_strategy]
+enabled = true
+unread_window_minutes = 15
+extra_cooldown_minutes = 30
+
+[database]
+enabled = true
+store_action = true
+
+[response_strategy]
+enabled = true
+reduce_after_unanswered = 2
+increase_after_unanswered = 1
+affinity_to_increase = 70
+reduce_threshold_bonus_minutes = 30
+reduce_quick_bonus_minutes = 2
+reduce_cooldown_bonus_minutes = 30
+increase_threshold_cut_minutes = 20
+increase_quick_cut_minutes = 2
+min_increase_threshold_minutes = 5
+min_increase_quick_minutes = 1
+
+[style]
+formal_max = 30
+warm_max = 70
+tone_thresholds = {}
+tone_descriptions = {}
+formal_description = "语气礼貌克制，表达关心但不过度打扰。"
+warm_description = "语气温柔自然，像朋友般关心。"
+intimate_description = "语气更亲近、更黏人，表达强烈在意。"
+humor_rate = 0.15
+humor_affinity_bonus = 0.25
+
+[persona]
+active_pack = "warm_companion"
+
+[[persona.packs]]
+key = "warm_companion"
+name = "温柔陪伴"
+style_hint = "语气温柔自然，像朋友一样关心对方。"
+behavior_hint = "用短句，语气轻柔，适度撒娇。"
+
+[[persona.packs]]
+key = "gentle_caregiver"
+name = "细心照顾"
+style_hint = "像贴心家人，关注作息与身体感受。"
+behavior_hint = "提醒吃饭休息，但不过度催促。"
+
+[[persona.packs]]
+key = "playful_buddy"
+name = "俏皮朋友"
+style_hint = "轻松俏皮，偶尔开个小玩笑。"
+behavior_hint = "多用口语和语气词，保持亲近感。"
+
+[[persona.packs]]
+key = "calm_listener"
+name = "安静倾听"
+style_hint = "稳重、冷静、支持性强。"
+behavior_hint = "少用感叹，多用理解与复述。"
+
+[[persona.packs]]
+key = "tsundere_partner"
+name = "傲娇伙伴"
+style_hint = "表面嘴硬，实际很关心。"
+behavior_hint = "语气不太直白，但会偷偷在意。"
+
+[[persona.packs]]
+key = "cheerful_motivator"
+name = "元气鼓励"
+style_hint = "积极阳光，擅长鼓励和打气。"
+behavior_hint = "多用正向词汇，适度用表情语气。"
+
+[[persona.packs]]
+key = "professional_assistant"
+name = "专业助手"
+style_hint = "礼貌、克制、明确。"
+behavior_hint = "简短直给，不使用过多情绪词。"
+
+[[persona.packs]]
+key = "late_night_confidant"
+name = "深夜知己"
+style_hint = "温和低声，适合深夜对话。"
+behavior_hint = "语速慢感，给人安全感。"
+
+[segments]
+
+[[segments.definitions]]
+name = "morning"
+start_hour = 6
+end_hour = 9
+enabled = true
+reminder = "早上时间到了，记得吃早餐哦。"
+
+[[segments.definitions]]
+name = "noon"
+start_hour = 11
+end_hour = 13
+enabled = true
+reminder = "中午了，记得吃午饭、稍微休息一下。"
+
+[[segments.definitions]]
+name = "evening"
+start_hour = 18
+end_hour = 20
+enabled = true
+reminder = "傍晚了，别忘了吃晚饭呀。"
+
+[[segments.definitions]]
+name = "late_night"
+start_hour = 22
+end_hour = 1
+enabled = true
+reminder = "夜深了，早点休息吧。"
+
+[messages]
+system_hint = "你是一个温暖、拟人化的陪伴者，语气简短、温柔、关心。"
+inactive_fallback = ["在吗？我有点想你啦。", "好久没聊天了，最近还好吗？", "在忙吗？我来看看你～"]
+quick_check_fallback = ["嗯？你刚刚还在吗？", "我还在这儿，随时都可以聊。", "要不要继续刚才的话题？"]
+gentle_nudge_fallback = ["我在呢，有需要就跟我说。", "如果你心情不太好，我一直都在。", "想聊聊也可以的，我会认真听。"]
+topic_followup_fallback = ["刚才说到的那件事，还要继续聊吗？", "你刚提到的话题我还记得呢。", "要不要把刚才的话题聊完？"]
+segment_reminder_fallback = ["我来提醒一下，记得照顾好自己。", "别太忙啦，记得吃饭和休息。"]
