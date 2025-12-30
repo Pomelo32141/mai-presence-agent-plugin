@@ -271,13 +271,17 @@ def _is_user_allowed(stream, config: Dict[str, Any]) -> bool:
     user_id = str(stream.user_info.user_id) if stream and stream.user_info else ""
     allowlist = list_cfg.get("allowlist", [])
     denylist = list_cfg.get("denylist", [])
+    mode = str(list_cfg.get("mode", "whitelist")).lower()
 
     if isinstance(denylist, list) and user_id in [str(x) for x in denylist]:
         return False
+
+    if mode == "blacklist":
+        return True
+
     if isinstance(allowlist, list) and allowlist:
         return user_id in [str(x) for x in allowlist]
-    return True
-
+    return False
 
 # 根据好感度选择语气风格
 def _decide_tone(affinity_score: int, config: Dict[str, Any]) -> Tuple[str, str]:
@@ -1231,6 +1235,15 @@ class PresenceAgentPlugin(BasePlugin):
             ),
         },
         "lists": {
+            "mode": ConfigField(
+                type=str,
+                default="whitelist",
+                description="名单模式（默认白名单）",
+                choices=["whitelist", "blacklist"],
+                input_type="select",
+                hint="白名单仅允许列表内用户；黑名单允许所有非列表用户",
+                order=0,
+            ),
             "allowlist": ConfigField(
                 type=list,
                 default=[],
